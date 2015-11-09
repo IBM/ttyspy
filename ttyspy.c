@@ -73,12 +73,8 @@ main(int argc, char **argv) {
     /* Allocate a PTY */
     int slave = -1;
     int ret = openpty(&master, &slave, NULL, &term, &win);
-    fprintf(stderr, "ret = %d, master = %d, slave = %d\n", ret, master, slave);
-    print_fds();
 
-    pid_t pid = -1;
-
-    pid = fork();
+    pid_t pid = fork();
     if (pid < 0) {
         warn("forkpty");
 
@@ -89,16 +85,20 @@ main(int argc, char **argv) {
 
         /* Setup file descriptors */
         close(master);
-
         dup2(slave, STDIN_FILENO);
         dup2(slave, STDOUT_FILENO);
         dup2(slave, STDERR_FILENO);
         close(slave);
 
+        /* Make session group leader */
+        if (setsid() < 0)
+            perror("setsid()");
+
         /* exec shell */
         execl(cmd, cmd, NULL);
     } else {
         /* Parent */
+        close(slave);
 
         /* Set local terminal to raw mode */
         struct termios rawterm = term;
@@ -145,8 +145,10 @@ main(int argc, char **argv) {
             }
         }
 
-
+        /* Reset terminal */
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
     }
+
     return 0;
 }
 
