@@ -1,17 +1,15 @@
+#include <dirent.h>
+#include <err.h>
+#include <pty.h>
 #include <pty.h>
 #include <pwd.h>
 #include <signal.h>
-#include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <err.h>
-#include <pty.h>
-#include <dirent.h>
-
-
-
-const char *config_file = "/etc/ttyspy.conf";
+#include <curl/curl.h>
 
 
 struct Config {
@@ -22,12 +20,15 @@ struct Config {
 };
 
 
+static const char *config_file = "/etc/ttyspy.conf";
+static int master;
+
 static struct Config *load_config(const char *);
 static void sig_handler(int);
 static void print_fds();
+static int spawn_uploader(struct Config *, struct passwd *);
 
 
-int master;
 
 
 int
@@ -73,6 +74,12 @@ main(int argc, char **argv) {
     /* Allocate a PTY */
     int slave = -1;
     int ret = openpty(&master, &slave, NULL, &term, &win);
+    if (ret < 0) {
+        perror("openpty");
+
+        /* exec shell */
+        execl(cmd, cmd, NULL);
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -100,6 +107,9 @@ main(int argc, char **argv) {
         /* Parent */
         close(slave);
 
+        /* Fork a child to handle streaming the session to the logging server */
+        int transcript_pipe = spawn_uploader(config, user);
+
         /* Set local terminal to raw mode */
         struct termios rawterm = term;
         cfmakeraw(&rawterm);
@@ -107,13 +117,14 @@ main(int argc, char **argv) {
         /* rawterm.cflags &= ~ECHO; */
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &rawterm);
 
-        /* Install handler for SIGWINCH */
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
+        /* Install signal handler */
+        struct sigaction sa = {
+            .sa_handler = sig_handler,
+            .sa_flags = SA_RESTART,
+        };
         sigemptyset(&sa.sa_mask);
-        sa.sa_handler = sig_handler;
-        sa.sa_flags = SA_RESTART;
         sigaction(SIGWINCH, &sa, NULL);
+        sigaction(SIGPIPE, &sa, NULL);
 
         for (;;) {
             fd_set rfds;
@@ -142,11 +153,13 @@ main(int argc, char **argv) {
                     break;
                 }
                 write(STDOUT_FILENO, buffer, result);
+                write(transcript_pipe, buffer, result);
             }
         }
 
         /* Reset terminal */
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
+        fprintf(stderr, "ttyspy exiting...\n");
     }
 
     return 0;
@@ -154,17 +167,39 @@ main(int argc, char **argv) {
 
 static void sig_handler(int signo) {
     struct winsize win;
-    int result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
-    if (result < 0) {
-        warn("ioctl TIOCGWINSZ");
-        return;
+    int result;
+
+    switch (signo) {
+    case SIGWINCH:
+        fprintf(stderr, "Received SIGWINCH\n");
+        result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
+        if (result < 0) {
+            warn("ioctl TIOCGWINSZ");
+            return;
+        }
+        ioctl(master, TIOCSWINSZ, &win);
+        break;
+    case SIGPIPE:
+        /* noop */
+        break;
+    default:
+        fprintf(stderr, "Received SIG%d\n", signo);
     }
-    ioctl(master, TIOCSWINSZ, &win);
 }
 
 static struct Config *load_config(const char *path) {
-    /* TODO */
-    return (struct Config *)path;
+    struct Config *config = malloc(sizeof(struct Config));
+    if (config == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+
+    config->endpoint = "https://server.test:8090/transcript";
+    config->ca_path = "/home/dlundquist/src/session_receiver/src/main/ca.pem";
+    config->cert_path = "/home/dlundquist/src/session_receiver/src/main/client.test.pem";
+    config->key_path = "/home/dlundquist/src/session_receiver/src/main/client.test.pem";
+
+    return config;
 }
 
 static void print_fds() {
@@ -185,3 +220,121 @@ static void print_fds() {
     }
 }
 
+/*
+ * Spawn a child process to handle the actual HTTPS POST process
+ * This allows us to use curl_easy_perform and still multiplex master PTY and
+ * standard IO in parent
+ *
+ * Returns file descriptor of pipe to child
+ */
+static int
+spawn_uploader(struct Config *config, struct passwd *user) {
+    int pipefd[2];
+
+    if (pipe(pipefd) < 0) {
+        perror("pipe");
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    } else if (pid > 0) {
+        /* parent */
+        close(pipefd[0]);
+
+        return pipefd[1];
+    }
+
+    /* child */
+    close(master);
+    close(pipefd[1]);
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+
+
+    curl_global_init(CURL_GLOBAL_ALL);
+    CURL *curl = curl_easy_init();
+
+    /* Send keep-alives */
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 10L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 3L);
+
+    /* Verify server certificate and provide client certificate */
+    if (config->cert_path && config->key_path) {
+        curl_easy_setopt(curl, CURLOPT_SSLCERTTYPE, "PEM");
+        curl_easy_setopt(curl, CURLOPT_SSLCERT, config->cert_path);
+        curl_easy_setopt(curl, CURLOPT_SSLKEY, config->key_path);
+    }
+    if (config->ca_path) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, config->ca_path);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, config->endpoint);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    FILE *transcript = fdopen(pipefd[0], "r");
+    if (transcript == NULL) {
+        perror("fdopen");
+        exit(1);
+    }
+    curl_easy_setopt(curl, CURLOPT_READDATA, transcript);
+
+    struct curl_slist *http_headers = NULL;
+
+    /* build headers */
+    http_headers = curl_slist_append(http_headers, "Transfer-Encoding: chunked");
+    http_headers = curl_slist_append(http_headers, "Content-Type: application/typescript");
+
+    char *hostname = malloc(256);
+    if (hostname == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    gethostname(hostname, 256);
+    char *x_hostname = NULL;
+    asprintf(&x_hostname, "X-Hostname: %s", hostname);
+    if (x_hostname == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_hostname);
+
+    char *x_username = NULL;
+    asprintf(&x_username, "X-Username: %s", user->pw_name);
+    if (x_username == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_username);
+
+    char *x_gecos = NULL;
+    asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
+    if (x_gecos == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_gecos);
+
+    char *ssh_client = getenv("SSH_CLIENT");
+    if (ssh_client) {
+        char *x_ssh_client = NULL;
+        asprintf(&x_ssh_client, "X-Ssh-Client: %s", getenv("SSH_CLIENT"));
+        if (x_ssh_client == NULL) {
+            perror("malloc");
+            exit(1);
+        }
+        http_headers = curl_slist_append(http_headers, x_ssh_client);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, http_headers);
+
+    CURLcode res = curl_easy_perform(curl);
+    if(res != CURLE_OK)
+        fprintf(stderr, "curl_easy_perform() failed: %s\n",
+                curl_easy_strerror(res));
+
+    curl_easy_cleanup(curl);
+
+    exit(0);
+}
