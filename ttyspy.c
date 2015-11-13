@@ -10,29 +10,20 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <curl/curl.h>
+#include "config.h"
 
-
-struct Config {
-    char *endpoint;
-    char *cert_path;
-    char *key_path;
-    char *ca_path;
-};
 
 
 static const char *config_file = "/etc/ttyspy.conf";
 static int master;
 
-static struct Config *load_config(const char *);
 static void sig_handler(int);
 static void print_fds();
 static int spawn_uploader(struct Config *, struct passwd *);
 
 
-
-
 int
-main(int argc, char **argv) {
+main() {
     int result;
 
     print_fds();
@@ -185,21 +176,6 @@ static void sig_handler(int signo) {
     default:
         fprintf(stderr, "Received SIG%d\n", signo);
     }
-}
-
-static struct Config *load_config(const char *path) {
-    struct Config *config = malloc(sizeof(struct Config));
-    if (config == NULL) {
-        perror("malloc");
-        exit(1);
-    }
-
-    config->endpoint = "https://server.test:8090/transcript";
-    config->ca_path = "/home/dlundquist/src/session_receiver/src/main/ca.pem";
-    config->cert_path = "/home/dlundquist/src/session_receiver/src/main/client.test.pem";
-    config->key_path = "/home/dlundquist/src/session_receiver/src/main/client.test.pem";
-
-    return config;
 }
 
 static void print_fds() {
