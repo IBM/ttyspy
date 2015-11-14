@@ -12,6 +12,8 @@ AC_CONFIG_SRCDIR([src/ttyspy.c])
 AC_PROG_CC_C99
 AM_PROG_CC_C_O
 
+AC_USE_SYSTEM_EXTENSIONS
+
 # Checks for libraries.
 LIBCURL_CHECK_CONFIG()
 
@@ -25,7 +27,7 @@ AC_TYPE_SIZE_T
 # Checks for library functions.
 AC_FUNC_FORK
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([dup2 gethostname select strdup])
+AC_CHECK_FUNCS([dup2 gethostname select strdup asprintf])
 AC_CHECK_LIB([util], [openpty], [
   LIBUTIL="-lutil"
   AC_SUBST([LIBUTIL])
