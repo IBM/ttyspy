@@ -6,5 +6,5 @@ ttyspy_SOURCES = ttyspy.c \
 		cfg_tokenizer.h \
 		config.c \
 		config.h
-
+ttyspy_CPPFLAGS = $(LIBCURL_CPPFLAGS)
 ttyspy_LDADD = $(LIBUTIL) $(LIBCURL)

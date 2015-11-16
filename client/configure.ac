@@ -18,7 +18,7 @@ AC_USE_SYSTEM_EXTENSIONS
 LIBCURL_CHECK_CONFIG()
 
 # Checks for header files.
-AC_CHECK_HEADERS([stdlib.h string.h unistd.h])
+AC_CHECK_HEADERS([stdlib.h string.h pty.h unistd.h curl/curl.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_PID_T

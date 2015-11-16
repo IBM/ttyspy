@@ -1,14 +1,18 @@
 #include <dirent.h>
 #include <err.h>
+#ifdef HAVE_PTY_H
 #include <pty.h>
-#include <pty.h>
+#endif
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <termios.h>
 #include <unistd.h>
+#include <util.h>
 #include <curl/curl.h>
 #include "config.h"
 
@@ -185,7 +189,7 @@ static void sig_handler(int signo) {
 static void print_fds() {
     fprintf(stderr, "Open files:\n");
     char cmdline[512];
-    sprintf(cmdline, "/bin/ls -l /proc/%d/fd", getpid());
+    snprintf(cmdline, sizeof(cmdline), "/bin/ls -l /proc/%d/fd", getpid());
     FILE *cmd = popen(cmdline, "r");
     if (cmd == NULL) {
         perror("popen");
