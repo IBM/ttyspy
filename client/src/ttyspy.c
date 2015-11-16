@@ -12,7 +12,9 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#ifdef HAVE_UTIL_H
 #include <util.h>
+#endif
 #include <curl/curl.h>
 #include "config.h"
 
