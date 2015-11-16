@@ -20,6 +20,7 @@ static int master;
 static void sig_handler(int);
 static void print_fds();
 static int spawn_uploader(struct Config *, struct passwd *);
+static struct curl_slist *build_http_headers(const struct passwd *);
 
 
 int
@@ -135,7 +136,8 @@ main() {
                     warn("read STDIN");
                     break;
                 }
-                write(master, buffer, result);
+                result = write(master, buffer, result);
+                /* XXX ignored */
             }
             if (FD_ISSET(master, &rfds)) {
                 result = read(master, buffer, sizeof(buffer));
@@ -143,8 +145,10 @@ main() {
                     warn("read pty");
                     break;
                 }
-                write(STDOUT_FILENO, buffer, result);
-                write(transcript_pipe, buffer, result);
+                result = write(STDOUT_FILENO, buffer, result);
+                /* XXX ignored */
+                result = write(transcript_pipe, buffer, result);
+                /* XXX ignored */
             }
         }
 
@@ -259,49 +263,7 @@ spawn_uploader(struct Config *config, struct passwd *user) {
     struct curl_slist *http_headers = NULL;
 
     /* build headers */
-    http_headers = curl_slist_append(http_headers, "Transfer-Encoding: chunked");
-    http_headers = curl_slist_append(http_headers, "Content-Type: application/typescript");
-
-    char *hostname = malloc(256);
-    if (hostname == NULL) {
-        perror("malloc");
-        exit(1);
-    }
-    gethostname(hostname, 256);
-    char *x_hostname = NULL;
-    asprintf(&x_hostname, "X-Hostname: %s", hostname);
-    if (x_hostname == NULL) {
-        perror("malloc");
-        exit(1);
-    }
-    http_headers = curl_slist_append(http_headers, x_hostname);
-
-    char *x_username = NULL;
-    asprintf(&x_username, "X-Username: %s", user->pw_name);
-    if (x_username == NULL) {
-        perror("malloc");
-        exit(1);
-    }
-    http_headers = curl_slist_append(http_headers, x_username);
-
-    char *x_gecos = NULL;
-    asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
-    if (x_gecos == NULL) {
-        perror("malloc");
-        exit(1);
-    }
-    http_headers = curl_slist_append(http_headers, x_gecos);
-
-    char *ssh_client = getenv("SSH_CLIENT");
-    if (ssh_client) {
-        char *x_ssh_client = NULL;
-        asprintf(&x_ssh_client, "X-Ssh-Client: %s", getenv("SSH_CLIENT"));
-        if (x_ssh_client == NULL) {
-            perror("malloc");
-            exit(1);
-        }
-        http_headers = curl_slist_append(http_headers, x_ssh_client);
-    }
+    http_headers = build_http_headers(user);
 
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, http_headers);
 
@@ -313,4 +275,56 @@ spawn_uploader(struct Config *config, struct passwd *user) {
     curl_easy_cleanup(curl);
 
     exit(0);
+}
+
+static struct curl_slist *
+build_http_headers(const struct passwd *user) {
+    struct curl_slist *http_headers = NULL;
+    int result;
+
+    http_headers = curl_slist_append(http_headers, "Transfer-Encoding: chunked");
+    http_headers = curl_slist_append(http_headers, "Content-Type: application/typescript");
+
+    char *hostname = malloc(256);
+    if (hostname == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    gethostname(hostname, 256);
+    char *x_hostname = NULL;
+    result = asprintf(&x_hostname, "X-Hostname: %s", hostname);
+    if (result < 0 || x_hostname == NULL) {
+        perror("asprinf");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_hostname);
+
+    char *x_username = NULL;
+    result = asprintf(&x_username, "X-Username: %s", user->pw_name);
+    if (result < 0 || x_username == NULL) {
+        perror("asprintf");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_username);
+
+    char *x_gecos = NULL;
+    result = asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
+    if (result < 0 || x_gecos == NULL) {
+        perror("asprintf");
+        exit(1);
+    }
+    http_headers = curl_slist_append(http_headers, x_gecos);
+
+    char *ssh_client = getenv("SSH_CLIENT");
+    if (ssh_client) {
+        char *x_ssh_client = NULL;
+        result = asprintf(&x_ssh_client, "X-Ssh-Client: %s", getenv("SSH_CLIENT"));
+        if (result < 0 || x_ssh_client == NULL) {
+            perror("asprintf");
+            exit(1);
+        }
+        http_headers = curl_slist_append(http_headers, x_ssh_client);
+    }
+
+    return http_headers;
 }
