@@ -24,7 +24,6 @@ static const char *config_file = "/etc/ttyspy.conf";
 static int master;
 
 static void sig_handler(int);
-static void print_fds();
 static int spawn_uploader(struct Config *, struct passwd *);
 static struct curl_slist *build_http_headers(const struct passwd *);
 
@@ -33,13 +32,11 @@ int
 main() {
     int result;
 
-    print_fds();
     /* Read configuration */
     struct Config *config = load_config(config_file);
     if (config == NULL) {
         return 1;
     }
-    print_fds();
 
     /* Gather user info */
     struct passwd *user = getpwuid(getuid());
@@ -51,10 +48,6 @@ main() {
     char *cmd = user->pw_shell;
     if (cmd == NULL)
         cmd = "/bin/sh";
-
-    fprintf(stderr, "User shell: %s\n", cmd);
-
-    print_fds();
 
     /* Get terminal settings */
     struct termios term;
@@ -185,24 +178,6 @@ static void sig_handler(int signo) {
         break;
     default:
         fprintf(stderr, "Received SIG%d\n", signo);
-    }
-}
-
-static void print_fds() {
-    fprintf(stderr, "Open files:\n");
-    char cmdline[512];
-    snprintf(cmdline, sizeof(cmdline), "/bin/ls -l /proc/%d/fd", getpid());
-    FILE *cmd = popen(cmdline, "r");
-    if (cmd == NULL) {
-        perror("popen");
-    } else {
-        char buffer[4096];
-        size_t len = 0;
-
-        while ((len = fread(buffer, 1, sizeof(buffer), cmd)) > 0)
-            fwrite(buffer, len, 1, stderr);
-
-        pclose(cmd);
     }
 }
 

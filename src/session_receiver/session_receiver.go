@@ -3,20 +3,16 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
-type SessionLog struct {
-	s        int
-	username string
-	gecos    string
-}
+var transcriptDir string = "/srv/transcripts"
 
 func transcriptHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
@@ -41,8 +37,9 @@ func transcriptHandler(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "Expected X-Gecos", 499)
 	}
 
-	dir := username + "/" + hostname
-	start_timestamp := time.Now().UTC().Format(time.RFC3339)
+	ts := time.Now().UTC()
+	dir := fmt.Sprintf("%v/%v/%v/%04d/%02d/%02d", transcriptDir, username, hostname, ts.Year(), ts.Month(), ts.Day())
+	start_timestamp := ts.Format(time.RFC3339)
 	prefix := "transcript_" + start_timestamp + "_"
 	os.MkdirAll(dir, 0755)
 	file, err := ioutil.TempFile(dir, prefix)
@@ -83,32 +80,51 @@ func transcriptHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
-	fmt.Printf("Request %s\n", req.Method)
-	for key, value := range req.Header {
-		fmt.Printf("%s:\t%s\n", key, strings.Join(value, ", "))
-	}
-
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte("This is an example server.\n"))
 }
 
 func main() {
+	portPtr := flag.Int("port", 8090, "TCP port to listen on")
+	clientCaFilePtr := flag.String("ca", "", "TLS CA used to authenticate clients")
+	serverCertFilePtr := flag.String("cert", "", "TLS certificate to use for server")
+	serverKeyFilePtr := flag.String("key", "", "TLS private key to use for server")
+	transcriptStoreDirPtr := flag.String("store", "/srv/transcripts", "Directory to store transcripts")
+
+	flag.Parse()
+
+	if *serverKeyFilePtr == "" {
+		*serverKeyFilePtr = *serverCertFilePtr
+	}
+
+	if *clientCaFilePtr == "" || *serverCertFilePtr == "" || *serverKeyFilePtr == "" {
+		flag.PrintDefaults()
+		return
+	}
+
+	transcriptDir = *transcriptStoreDirPtr
+
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/transcript", transcriptHandler)
 
 	client_ca_pool := x509.NewCertPool()
-	data, err := ioutil.ReadFile("ca.pem")
+	data, err := ioutil.ReadFile(*clientCaFilePtr)
 	if err == nil {
 		client_ca_pool.AppendCertsFromPEM(data)
 	}
 
+	address := fmt.Sprintf(":%v", *portPtr)
+	fmt.Println("Listening on " + address)
 	server := &http.Server{
-		Addr: ":8090",
+		Addr: address,
 		TLSConfig: &tls.Config{
 			ClientAuth: tls.RequireAndVerifyClientCert,
 			ClientCAs:  client_ca_pool,
 		},
 	}
 
-	server.ListenAndServeTLS("cert.pem", "cert.key")
+	err = server.ListenAndServeTLS(*serverCertFilePtr, *serverKeyFilePtr)
+	if err != nil {
+		panic(err)
+	}
 }
