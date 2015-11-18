@@ -26,10 +26,11 @@ static int master;
 static void sig_handler(int);
 static int spawn_uploader(struct Config *, struct passwd *);
 static struct curl_slist *build_http_headers(const struct passwd *);
+static void exec_shell_or_command(const char *, int , char *[]) __attribute__ ((noreturn));
 
 
 int
-main() {
+main(int argc, char *argv[]) {
     int result;
 
     /* Read configuration */
@@ -44,10 +45,6 @@ main() {
         warn("getpwuid");
         return 1;
     }
-
-    char *cmd = user->pw_shell;
-    if (cmd == NULL)
-        cmd = "/bin/sh";
 
     /* Get terminal settings */
     struct termios term;
@@ -69,7 +66,8 @@ main() {
         perror("openpty");
 
         /* exec shell */
-        execl(cmd, cmd, NULL);
+
+        exec_shell_or_command(user->pw_shell, argc, argv);
     }
 
     pid_t pid = fork();
@@ -77,7 +75,7 @@ main() {
         warn("forkpty");
 
         /* exec shell */
-        execl(cmd, cmd, NULL);
+        exec_shell_or_command(user->pw_shell, argc, argv);
     } else if (pid == 0) {
         /* Child */
 
@@ -93,7 +91,7 @@ main() {
             perror("setsid()");
 
         /* exec shell */
-        execl(cmd, cmd, NULL);
+        exec_shell_or_command(user->pw_shell, argc, argv);
     } else {
         /* Parent */
         close(slave);
@@ -308,4 +306,53 @@ build_http_headers(const struct passwd *user) {
     }
 
     return http_headers;
+}
+
+static void
+exec_shell_or_command(const char *shell, int argc, char *argv[]) {
+
+    /* If additional filter specified as argument exec it passing the
+     * remaining arguments */
+    if (argc > 1) {
+        char **new_argv = malloc(argc * sizeof(char *));
+        if (new_argv == NULL) {
+            perror("malloc");
+            exit(1);
+        }
+
+        for (int i = 0; i < argc - 1; i++)
+            new_argv[i] = argv[i + 1];
+        new_argv[argc - 1] = NULL;
+
+        execvp(new_argv[0], new_argv);
+        perror("exec");
+        exit(1);
+    }
+
+    /* If an SSH command was specified run it */
+    const char *ssh_orig_cmd = getenv("SSH_ORIGINAL_COMMAND");
+    if (ssh_orig_cmd != NULL) {
+        char **new_argv = malloc(4 * sizeof(char *));
+        if (new_argv == NULL) {
+            perror("malloc");
+            exit(1);
+        }
+        new_argv[0] = (char *)shell;
+        new_argv[1] = "-c";
+        new_argv[2] =(char *) ssh_orig_cmd;
+        new_argv[3] = NULL;
+
+        execv(new_argv[0], new_argv);
+        perror("exec");
+        exit(1);
+    }
+
+    /* Otherwise spawn the user's login shell */
+    char **new_argv = malloc(3 * sizeof(char *));
+    new_argv[0] = (char *)shell;
+    new_argv[1] = "-l";
+    new_argv[2] = NULL;
+    execv(new_argv[0], new_argv);
+    perror("exec");
+    exit(1);
 }
