@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 #ifdef HAVE_UTIL_H
@@ -113,6 +114,7 @@ main(int argc, char *argv[]) {
         };
         sigemptyset(&sa.sa_mask);
         sigaction(SIGWINCH, &sa, NULL);
+        sigaction(SIGCHLD, &sa, NULL);
         sigaction(SIGPIPE, &sa, NULL);
 
         for (;;) {
@@ -160,6 +162,8 @@ main(int argc, char *argv[]) {
 static void sig_handler(int signo) {
     struct winsize win;
     int result;
+    int status;
+    pid_t pid;
 
     switch (signo) {
     case SIGWINCH:
@@ -170,6 +174,10 @@ static void sig_handler(int signo) {
             return;
         }
         ioctl(master, TIOCSWINSZ, &win);
+        break;
+    case SIGCHLD:
+        pid = waitpid(-1, &status, WNOHANG);
+        fprintf(stderr, "Child [%d] terminated with %d\n", pid, status);
         break;
     case SIGPIPE:
         /* noop */
