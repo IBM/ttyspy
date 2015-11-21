@@ -121,15 +121,25 @@ main(int argc, char *argv[]) {
 
         for (;;) {
             fd_set rfds;
+            fd_set efds;
             char buffer[256];
             FD_ZERO(&rfds);
+            FD_ZERO(&efds);
             FD_SET(STDIN_FILENO, &rfds);
+            FD_SET(STDIN_FILENO, &efds);
             FD_SET(master, &rfds);
+            FD_SET(master, &efds);
 
-            result = select(master + 1, &rfds, NULL, NULL, NULL);
+            result = select(master + 1, &rfds, NULL, &efds, NULL);
             if (result < 0) {
                 warn(PACKAGE ": select");
                 continue;
+            }
+            if (FD_ISSET(STDIN_FILENO, &efds)) {
+                break;
+            }
+            if (FD_ISSET(master, &efds)) {
+                break;
             }
             if (FD_ISSET(STDIN_FILENO, &rfds)) {
                 result = read(STDIN_FILENO, buffer, sizeof(buffer));
