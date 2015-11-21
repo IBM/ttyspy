@@ -23,6 +23,8 @@
 
 static const char *config_file = "/etc/ttyspy.conf";
 static int master;
+static pid_t shell_pid;
+static volatile int done = 0;
 
 static void sig_handler(int);
 static int spawn_uploader(struct Config *, struct passwd *);
@@ -71,13 +73,13 @@ main(int argc, char *argv[]) {
         exec_shell_or_command(user->pw_shell, argc, argv);
     }
 
-    pid_t pid = fork();
-    if (pid < 0) {
+    shell_pid = fork();
+    if (shell_pid < 0) {
         warn("forkpty");
 
         /* exec shell */
         exec_shell_or_command(user->pw_shell, argc, argv);
-    } else if (pid == 0) {
+    } else if (shell_pid == 0) {
         /* Child */
 
         /* Setup file descriptors */
@@ -117,7 +119,7 @@ main(int argc, char *argv[]) {
         sigaction(SIGCHLD, &sa, NULL);
         sigaction(SIGPIPE, &sa, NULL);
 
-        for (;;) {
+        while (! done) {
             fd_set rfds;
             char buffer[256];
             FD_ZERO(&rfds);
@@ -150,6 +152,8 @@ main(int argc, char *argv[]) {
                 /* XXX ignored */
             }
         }
+        close(transcript_pipe);
+        close(master);
 
         /* Reset terminal */
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
@@ -178,6 +182,8 @@ static void sig_handler(int signo) {
     case SIGCHLD:
         pid = waitpid(-1, &status, WNOHANG);
         fprintf(stderr, "Child [%d] terminated with %d\n", pid, status);
+        if (pid == shell_pid)
+            done = 1;
         break;
     case SIGPIPE:
         /* noop */
