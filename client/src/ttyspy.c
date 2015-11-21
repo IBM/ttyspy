@@ -4,6 +4,7 @@
 #include <pty.h>
 #endif
 #include <pwd.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +44,7 @@ main(int argc, char *argv[]) {
     /* Gather user info */
     struct passwd *user = getpwuid(getuid());
     if (user == NULL) {
-        warn(PACKAGE ": getpwuid");
+        perror(PACKAGE ": getpwuid");
         return 1;
     }
 
@@ -51,13 +52,13 @@ main(int argc, char *argv[]) {
     struct termios term;
     result = tcgetattr(STDIN_FILENO, &term);
     if (result < 0) {
-        warn(PACKAGE ": tcgetattr");
+        perror(PACKAGE ": tcgetattr");
     }
 
     struct winsize win;
     result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
     if (result < 0) {
-        warn(PACKAGE ": ioctl TIOCGWINSZ");
+        perror(PACKAGE ": ioctl TIOCGWINSZ");
     }
 
     /* Allocate a PTY */
@@ -131,9 +132,11 @@ main(int argc, char *argv[]) {
             FD_SET(master, &efds);
 
             result = select(master + 1, &rfds, NULL, &efds, NULL);
-            if (result < 0) {
-                warn(PACKAGE ": select");
+            if (result < 0 && errno == EINTR) /* received signal */
                 continue;
+            if (result < 0) {
+                perror(PACKAGE ": select");
+                break;
             }
             if (FD_ISSET(STDIN_FILENO, &efds)) {
                 break;
@@ -144,7 +147,7 @@ main(int argc, char *argv[]) {
             if (FD_ISSET(STDIN_FILENO, &rfds)) {
                 result = read(STDIN_FILENO, buffer, sizeof(buffer));
                 if (result < 0) {
-                    warn(PACKAGE ": read STDIN");
+                    perror(PACKAGE ": read STDIN");
                     break;
                 }
                 result = write(master, buffer, result);
@@ -153,7 +156,7 @@ main(int argc, char *argv[]) {
             if (FD_ISSET(master, &rfds)) {
                 result = read(master, buffer, sizeof(buffer));
                 if (result < 0) {
-                    warn(PACKAGE ": read pty");
+                    perror(PACKAGE ": read pty");
                     break;
                 }
                 result = write(STDOUT_FILENO, buffer, result);
@@ -179,11 +182,10 @@ static void sig_handler(int signo) {
 
     switch (signo) {
     case SIGWINCH:
-        fprintf(stderr, PACKAGE ": received SIGWINCH\n");
         result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
         if (result < 0) {
-            warn(PACKAGE ":ioctl TIOCGWINSZ");
-            return;
+            perror(PACKAGE ": ioctl TIOCGWINSZ");
+            break;
         }
         ioctl(master, TIOCSWINSZ, &win);
         break;
@@ -192,7 +194,7 @@ static void sig_handler(int signo) {
             pid = waitpid(-1, &status, WNOHANG);
             if (pid > 0)
                 fprintf(stderr, PACKAGE ": child [%d] terminated with %d\n", pid, status);
-            if (pid < 0)
+            if (pid < 0 && errno != ECHILD)
                 perror(PACKAGE ": waitpid");
         } while (pid > 0);
         break;
