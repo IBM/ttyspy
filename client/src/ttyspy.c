@@ -43,7 +43,7 @@ main(int argc, char *argv[]) {
     /* Gather user info */
     struct passwd *user = getpwuid(getuid());
     if (user == NULL) {
-        warn("getpwuid");
+        warn(PACKAGE ": getpwuid");
         return 1;
     }
 
@@ -51,20 +51,20 @@ main(int argc, char *argv[]) {
     struct termios term;
     result = tcgetattr(STDIN_FILENO, &term);
     if (result < 0) {
-        warn("tcgetattr");
+        warn(PACKAGE ": tcgetattr");
     }
 
     struct winsize win;
     result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
     if (result < 0) {
-        warn("ioctl TIOCGWINSZ");
+        warn(PACKAGE ": ioctl TIOCGWINSZ");
     }
 
     /* Allocate a PTY */
     int slave = -1;
     int ret = openpty(&master, &slave, NULL, &term, &win);
     if (ret < 0) {
-        perror("openpty");
+        perror(PACKAGE ": openpty");
 
         /* exec shell */
 
@@ -73,7 +73,9 @@ main(int argc, char *argv[]) {
 
     pid_t pid = fork();
     if (pid < 0) {
-        warn("forkpty");
+        perror(PACKAGE ": fork");
+        close(slave);
+        close(master);
 
         /* exec shell */
         exec_shell_or_command(user->pw_shell, argc, argv);
@@ -89,7 +91,7 @@ main(int argc, char *argv[]) {
 
         /* Make session group leader */
         if (setsid() < 0)
-            perror("setsid()");
+            perror(PACKAGE ": setsid()");
 
         /* exec shell */
         exec_shell_or_command(user->pw_shell, argc, argv);
@@ -126,13 +128,13 @@ main(int argc, char *argv[]) {
 
             result = select(master + 1, &rfds, NULL, NULL, NULL);
             if (result < 0) {
-                warn("select");
+                warn(PACKAGE ": select");
                 continue;
             }
             if (FD_ISSET(STDIN_FILENO, &rfds)) {
                 result = read(STDIN_FILENO, buffer, sizeof(buffer));
                 if (result < 0) {
-                    warn("read STDIN");
+                    warn(PACKAGE ": read STDIN");
                     break;
                 }
                 result = write(master, buffer, result);
@@ -141,7 +143,7 @@ main(int argc, char *argv[]) {
             if (FD_ISSET(master, &rfds)) {
                 result = read(master, buffer, sizeof(buffer));
                 if (result < 0) {
-                    warn("read pty");
+                    warn(PACKAGE ": read pty");
                     break;
                 }
                 result = write(STDOUT_FILENO, buffer, result);
@@ -153,7 +155,7 @@ main(int argc, char *argv[]) {
 
         /* Reset terminal */
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
-        fprintf(stderr, "ttyspy exiting...\n");
+        fprintf(stderr, PACKAGE " exiting...\n");
     }
 
     return 0;
@@ -167,23 +169,29 @@ static void sig_handler(int signo) {
 
     switch (signo) {
     case SIGWINCH:
-        fprintf(stderr, "Received SIGWINCH\n");
+        fprintf(stderr, PACKAGE ": received SIGWINCH\n");
         result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
         if (result < 0) {
-            warn("ioctl TIOCGWINSZ");
+            warn(PACKAGE ":ioctl TIOCGWINSZ");
             return;
         }
         ioctl(master, TIOCSWINSZ, &win);
         break;
     case SIGCHLD:
-        pid = waitpid(-1, &status, WNOHANG);
-        fprintf(stderr, "Child [%d] terminated with %d\n", pid, status);
+        do {
+            pid = waitpid(-1, &status, WNOHANG);
+            if (pid > 0)
+                fprintf(stderr, PACKAGE ": child [%d] terminated with %d\n", pid, status);
+            if (pid < 0)
+                perror(PACKAGE ": waitpid");
+        } while (pid > 0);
         break;
     case SIGPIPE:
         /* noop */
         break;
     default:
-        fprintf(stderr, "Received SIG%d\n", signo);
+        fprintf(stderr, PACKAGE ": received signal %d\n", signo);
+        break;
     }
 }
 
@@ -199,12 +207,12 @@ spawn_uploader(struct Config *config, struct passwd *user) {
     int pipefd[2];
 
     if (pipe(pipefd) < 0) {
-        perror("pipe");
+        perror(PACKAGE ": pipe");
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        perror("fork");
+        perror(PACKAGE ": fork");
         return -1;
     } else if (pid > 0) {
         /* parent */
@@ -242,7 +250,7 @@ spawn_uploader(struct Config *config, struct passwd *user) {
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     FILE *transcript = fdopen(pipefd[0], "r");
     if (transcript == NULL) {
-        perror("fdopen");
+        perror(PACKAGE ": fdopen");
         exit(1);
     }
     curl_easy_setopt(curl, CURLOPT_READDATA, transcript);
@@ -255,8 +263,8 @@ spawn_uploader(struct Config *config, struct passwd *user) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, http_headers);
 
     CURLcode res = curl_easy_perform(curl);
-    if(res != CURLE_OK)
-        fprintf(stderr, "curl_easy_perform() failed: %s\n",
+    if (res != CURLE_OK)
+        fprintf(stderr, PACKAGE ": curl_easy_perform() failed: %s\n",
                 curl_easy_strerror(res));
 
     curl_easy_cleanup(curl);
@@ -274,14 +282,14 @@ build_http_headers(const struct passwd *user) {
 
     char *hostname = malloc(256);
     if (hostname == NULL) {
-        perror("malloc");
+        perror(PACKAGE ": malloc");
         exit(1);
     }
     gethostname(hostname, 256);
     char *x_hostname = NULL;
     result = asprintf(&x_hostname, "X-Hostname: %s", hostname);
     if (result < 0 || x_hostname == NULL) {
-        perror("asprinf");
+        perror(PACKAGE ": asprinf");
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_hostname);
@@ -289,7 +297,7 @@ build_http_headers(const struct passwd *user) {
     char *x_username = NULL;
     result = asprintf(&x_username, "X-Username: %s", user->pw_name);
     if (result < 0 || x_username == NULL) {
-        perror("asprintf");
+        perror(PACKAGE ": asprintf");
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_username);
@@ -297,7 +305,7 @@ build_http_headers(const struct passwd *user) {
     char *x_gecos = NULL;
     result = asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
     if (result < 0 || x_gecos == NULL) {
-        perror("asprintf");
+        perror(PACKAGE ": asprintf");
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_gecos);
@@ -307,7 +315,7 @@ build_http_headers(const struct passwd *user) {
         char *x_ssh_client = NULL;
         result = asprintf(&x_ssh_client, "X-Ssh-Client: %s", getenv("SSH_CLIENT"));
         if (result < 0 || x_ssh_client == NULL) {
-            perror("asprintf");
+            perror(PACKAGE ": asprintf");
             exit(1);
         }
         http_headers = curl_slist_append(http_headers, x_ssh_client);
@@ -318,13 +326,12 @@ build_http_headers(const struct passwd *user) {
 
 static void
 exec_shell_or_command(const char *shell, int argc, char *argv[]) {
-
     /* If additional filter specified as argument exec it passing the
      * remaining arguments */
     if (argc > 1) {
         char **new_argv = malloc(argc * sizeof(char *));
         if (new_argv == NULL) {
-            perror("malloc");
+            perror(PACKAGE ": malloc");
             exit(1);
         }
 
@@ -333,7 +340,7 @@ exec_shell_or_command(const char *shell, int argc, char *argv[]) {
         new_argv[argc - 1] = NULL;
 
         execvp(new_argv[0], new_argv);
-        perror("exec");
+        perror(PACKAGE ": exec");
         exit(1);
     }
 
@@ -342,7 +349,7 @@ exec_shell_or_command(const char *shell, int argc, char *argv[]) {
     if (ssh_orig_cmd != NULL) {
         char **new_argv = malloc(4 * sizeof(char *));
         if (new_argv == NULL) {
-            perror("malloc");
+            perror(PACKAGE ": malloc");
             exit(1);
         }
         new_argv[0] = (char *)shell;
@@ -351,7 +358,7 @@ exec_shell_or_command(const char *shell, int argc, char *argv[]) {
         new_argv[3] = NULL;
 
         execv(new_argv[0], new_argv);
-        perror("exec");
+        perror(PACKAGE ": exec");
         exit(1);
     }
 
@@ -361,6 +368,6 @@ exec_shell_or_command(const char *shell, int argc, char *argv[]) {
     new_argv[1] = "-l";
     new_argv[2] = NULL;
     execv(new_argv[0], new_argv);
-    perror("exec");
+    perror(PACKAGE ": exec");
     exit(1);
 }
