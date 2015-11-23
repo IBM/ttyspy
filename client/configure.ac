@@ -18,7 +18,7 @@ AC_USE_SYSTEM_EXTENSIONS
 LIBCURL_CHECK_CONFIG()
 
 # Checks for header files.
-AC_CHECK_HEADERS([stdlib.h string.h pty.h unistd.h util.h curl/curl.h])
+AC_CHECK_HEADERS([stdlib.h string.h pty.h unistd.h util.h utmp.h curl/curl.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_PID_T
@@ -27,7 +27,7 @@ AC_TYPE_SIZE_T
 # Checks for library functions.
 AC_FUNC_FORK
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([dup2 gethostname select strdup asprintf])
+AC_CHECK_FUNCS([gethostname select strdup asprintf login_tty openpty])
 AC_CHECK_LIB([util], [openpty], [
   LIBUTIL="-lutil"
   AC_SUBST([LIBUTIL])

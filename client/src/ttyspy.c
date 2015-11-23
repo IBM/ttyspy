@@ -1,21 +1,23 @@
-#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <err.h>
+#include <errno.h>
 #ifdef HAVE_PTY_H
 #include <pty.h>
 #endif
 #include <pwd.h>
-#include <errno.h>
 #include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 #ifdef HAVE_UTIL_H
 #include <util.h>
+#endif
+#ifdef HAVE_UTMP_H
+#include <utmp.h>
 #endif
 #include <curl/curl.h>
 #include "config.h"
@@ -24,6 +26,7 @@
 
 static const char *config_file = "/etc/ttyspy.conf";
 static int master;
+
 
 static void sig_handler(int);
 static int spawn_uploader(struct Config *, struct passwd *);
@@ -85,14 +88,10 @@ main(int argc, char *argv[]) {
 
         /* Setup file descriptors */
         close(master);
-        dup2(slave, STDIN_FILENO);
-        dup2(slave, STDOUT_FILENO);
-        dup2(slave, STDERR_FILENO);
-        close(slave);
-
-        /* Make session group leader */
-        if (setsid() < 0)
-            perror(PACKAGE ": setsid()");
+        if (login_tty(slave) < 0) {
+            perror(PACKAGE ": login_tty");
+            exit(1);
+        }
 
         /* exec shell */
         exec_shell_or_command(user->pw_shell, argc, argv);
