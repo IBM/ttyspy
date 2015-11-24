@@ -1,0 +1,2 @@
+ * Modify client to privilege separate upload from tty code: this will prevent users from being able to access the client certificate and private keys.
+ * Handle partial writes in select() loop: presently we silently discard output if either the user's PTY or archive server is slow and only accepts a partial write. This can result in corrupted transmissions when a large volume of data is transfered.
