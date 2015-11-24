@@ -51,6 +51,10 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Skip ttyspy for root */
+    if (user->pw_uid == 0)
+        exec_shell_or_command(user->pw_shell, argc, argv);
+
     /* Get terminal settings */
     struct termios term;
     result = tcgetattr(STDIN_FILENO, &term);
