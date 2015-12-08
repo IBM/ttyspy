@@ -1,0 +1,105 @@
+#!/usr/bin/perl -T
+# This SSH ForceCommand filter is meant to supplement the ttyspy
+# filter to allow one to use ttyspy with mosh ( https://mosh.mit.edu/ ).
+#
+# Specifically, the way that mosh-server works, SSH is used to make the
+# initial connection to a server, then upon successful authentication, the
+# mosh client spawns a mosh-server process which the client can then connect
+# to from any IP (including after roaming). However, a problem arises when
+# attempting to do compliance logging (as ttyspy is meant to accomplish)
+# because the mosh server bypasses the ttyspy.
+#
+# This filter should obviate this problem by directing the mosh-server to
+# execute ttyspy if it detects the user is attempting to run mosh. It isn't
+# foolproof of course, but should make things simple for the average user
+# to use mosh while still having compliance auditing in place.
+#
+# Note that this filter should generally be the last one called in the
+# ForceCommand list in the sshd_config. For example:
+#
+# ForceCommand /usr/bin/ttyspy [other filters] /usr/bin/ssh-mosh-filter
+
+# Before anything else, we want to prevent any funny business around signals
+# being used to background or terminate this process unexpectedly.
+$SIG{TERM} = 'IGNORE';
+$SIG{INT} = sub { kill SIGKILL, $$; };
+$SIG{HUP} = 'IGNORE';
+$SIG{TSTP} = 'IGNORE';
+
+my $ttyspy = '/usr/local/bin/ttyspy';
+
+sub check_environment() {
+    # Set the PATH to something safe so we can exec() in taint mode
+    $ENV{'PATH'} = "/usr/bin:/bin";
+}
+
+# Prints the motd without having to spawn an external process.
+sub print_motd {
+    open (MOTD, "</etc/motd") || syslog('warning', "Could not print /etc/motd: $!");
+    while (my $line = <MOTD>) {
+        print $line;
+    }
+    close(MOTD);
+}
+
+# This takes care of "doing the right thing" after a successful authentication
+sub parse_cmd {
+    my $cmd = $ENV{'SSH_ORIGINAL_COMMAND'};
+
+    my $shell;
+    # Make taint checking happy...
+    if ($ENV{'SHELL'} =~ /^([\w\/]+)$/) {
+        $shell = $1;
+    }
+
+    # Check to see whether our SSH_ORIGINAL_COMMAND was the mosh-server.
+    # If so, spawn this with a ttyspy shell
+    if ($cmd =~ /\S*\/mosh-server /) {
+        # Make taint checking happy.
+        if ($cmd =~ /^(.+)$/) {
+            $cmd = $1;
+        }
+
+        # Strip out single quotes
+        $cmd =~ s/\'//g;
+
+        my @args = split(/\s+/,$cmd);
+        $cmd = shift @args;
+        push @args, ("--", $ttyspy, $shell, "-l");
+
+        exec($cmd, @args);
+        die("exec($cmd) failed: $!");
+    }
+
+    # If additional arguments are specified, this indicates additional
+    # filters in the sshd_config. Execute them.
+    if (@ARGV) {
+        $cmd = shift @ARGV;
+        # Make taint checking happy.
+        if ($cmd =~ /^(.+)$/) {
+            $cmd = $1;
+        }
+        exec($cmd, @ARGV);
+        die("exec($cmd) failed: $!");
+    }
+
+    # If we have no command, just spawn a shell.
+    unless (defined($cmd)) {
+        print_motd();
+        exec($shell,"-l");
+        die("exec($shell) failed: $!");
+    }
+
+    # Otherwise, we had a command specified, but it wasn't mosh-server.
+    # execute it.
+    # Make taint checking happy.  Blindly accept any commands the user typed.
+    if ($cmd =~ /^(.+)$/) {
+        $cmd = $1;
+    }
+
+    exec($shell,"-c",$cmd);
+    die("exec($shell -c $cmd) failed: $!");
+}
+
+check_environment();
+parse_cmd();
