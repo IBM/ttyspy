@@ -7,6 +7,7 @@ struct Config {
     char *cert_path;
     char *key_path;
     char *ca_path;
+    char *socket;
 };
 
 

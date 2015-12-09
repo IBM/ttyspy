@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,7 +10,9 @@
 #include <pwd.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -19,24 +22,39 @@
 #ifdef HAVE_UTMP_H
 #include <utmp.h>
 #endif
-#include <curl/curl.h>
 #include "config.h"
+#include "ttyspy_protocol.h"
 
 
-
-static const char *config_file = "/etc/ttyspy.conf";
-static int master;
-
-
+static void usage() __attribute__ ((noreturn));
 static void sig_handler(int);
-static int spawn_uploader(struct Config *, struct passwd *);
-static struct curl_slist *build_http_headers(const struct passwd *);
+static struct TTYSpyRequest *build_request();
+static int open_ttyspy_session(const char *);
 static void exec_shell_or_command(const char *, int , char *[]) __attribute__ ((noreturn));
+
+
+static const char *default_config_file = "/etc/ttyspy.conf";
+/* global so we can pass along window size change from signal handler: */
+static int master;
 
 
 int
 main(int argc, char *argv[]) {
-    int result;
+    int ch;
+    const char *config_file = default_config_file;
+
+    while ((ch = getopt(argc, argv, "c:")) != -1) {
+        switch (ch) {
+            case 'c':
+                config_file = optarg;
+                break;
+            case '?':
+            default:
+                usage();
+        }
+    }
+    argc -= optind;
+    argv += optind;
 
     /* Read configuration */
     struct Config *config = load_config(config_file);
@@ -57,7 +75,7 @@ main(int argc, char *argv[]) {
 
     /* Get terminal settings */
     struct termios term;
-    result = tcgetattr(STDIN_FILENO, &term);
+    int result = tcgetattr(STDIN_FILENO, &term);
     if (result < 0) {
         perror(PACKAGE ": tcgetattr");
     }
@@ -104,7 +122,7 @@ main(int argc, char *argv[]) {
         close(slave);
 
         /* Fork a child to handle streaming the session to the logging server */
-        int transcript_pipe = spawn_uploader(config, user);
+        int transcript_pipe = open_ttyspy_session(config->socket);
 
         /* Set local terminal to raw mode */
         struct termios rawterm = term;
@@ -177,7 +195,14 @@ main(int argc, char *argv[]) {
     return 0;
 }
 
-static void sig_handler(int signo) {
+static void
+usage() {
+    fprintf(stderr, PACKAGE ": ttyspy client\nusage: ttyspy [-c <config_file>]\n");
+    exit(1);
+}
+
+static void
+sig_handler(int signo) {
     struct winsize win;
     int result;
     int status;
@@ -210,133 +235,68 @@ static void sig_handler(int signo) {
     }
 }
 
-/*
- * Spawn a child process to handle the actual HTTPS POST process
- * This allows us to use curl_easy_perform and still multiplex master PTY and
- * standard IO in parent
- *
- * Returns file descriptor of pipe to child
- */
-static int
-spawn_uploader(struct Config *config, struct passwd *user) {
-    int pipefd[2];
+static struct TTYSpyRequest *
+build_request() {
+    struct TTYSpyRequest *req = malloc(sizeof(struct TTYSpyRequest));
 
-    if (pipe(pipefd) < 0) {
-        perror(PACKAGE ": pipe");
+    if (req != NULL) {
+        memset(req, 0, sizeof(struct TTYSpyRequest));
+
+        char *login_tty = getenv("SSH_TTY");
+        if (login_tty != NULL)
+            strlcpy(req->login_tty, login_tty, sizeof(req->login_tty));
+
+        char *ssh_client = getenv("SSH_CLIENT");
+        if (ssh_client != NULL)
+            strlcpy(req->ssh_client, ssh_client, sizeof(req->ssh_client));
     }
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror(PACKAGE ": fork");
-        return -1;
-    } else if (pid > 0) {
-        /* parent */
-        close(pipefd[0]);
-
-        return pipefd[1];
-    }
-
-    /* child */
-    close(master);
-    close(pipefd[1]);
-    close(STDIN_FILENO);
-    close(STDOUT_FILENO);
-
-
-    curl_global_init(CURL_GLOBAL_ALL);
-    CURL *curl = curl_easy_init();
-
-    /* Send keep-alives */
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 10L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 3L);
-
-    /* Verify server certificate and provide client certificate */
-    if (config->cert_path && config->key_path) {
-        curl_easy_setopt(curl, CURLOPT_SSLCERTTYPE, "PEM");
-        curl_easy_setopt(curl, CURLOPT_SSLCERT, config->cert_path);
-        curl_easy_setopt(curl, CURLOPT_SSLKEY, config->key_path);
-    }
-    if (config->ca_path) {
-        curl_easy_setopt(curl, CURLOPT_CAINFO, config->ca_path);
-    }
-
-    curl_easy_setopt(curl, CURLOPT_URL, config->endpoint);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    FILE *transcript = fdopen(pipefd[0], "r");
-    if (transcript == NULL) {
-        perror(PACKAGE ": fdopen");
-        exit(1);
-    }
-    curl_easy_setopt(curl, CURLOPT_READDATA, transcript);
-
-    struct curl_slist *http_headers = NULL;
-
-    /* build headers */
-    http_headers = build_http_headers(user);
-
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, http_headers);
-
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK)
-        fprintf(stderr, PACKAGE ": curl_easy_perform() failed: %s\n",
-                curl_easy_strerror(res));
-
-    curl_easy_cleanup(curl);
-
-    exit(0);
+    return req;
 }
 
-static struct curl_slist *
-build_http_headers(const struct passwd *user) {
-    struct curl_slist *http_headers = NULL;
-    int result;
-
-    http_headers = curl_slist_append(http_headers, "Transfer-Encoding: chunked");
-    http_headers = curl_slist_append(http_headers, "Content-Type: application/typescript");
-
-    char *hostname = malloc(256);
-    if (hostname == NULL) {
-        perror(PACKAGE ": malloc");
-        exit(1);
+static int
+open_ttyspy_session(const char *sock_path) {
+    struct TTYSpyRequest *req = build_request();
+    if (req == NULL) {
+        perror("build_request");
+        return -1;
     }
-    gethostname(hostname, 256);
-    char *x_hostname = NULL;
-    result = asprintf(&x_hostname, "X-Hostname: %s", hostname);
-    if (result < 0 || x_hostname == NULL) {
-        perror(PACKAGE ": asprinf");
-        exit(1);
-    }
-    http_headers = curl_slist_append(http_headers, x_hostname);
 
-    char *x_username = NULL;
-    result = asprintf(&x_username, "X-Username: %s", user->pw_name);
-    if (result < 0 || x_username == NULL) {
-        perror(PACKAGE ": asprintf");
-        exit(1);
-    }
-    http_headers = curl_slist_append(http_headers, x_username);
+    int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd < 0)
+        return -1;
 
-    char *x_gecos = NULL;
-    result = asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
-    if (result < 0 || x_gecos == NULL) {
-        perror(PACKAGE ": asprintf");
-        exit(1);
+    struct sockaddr_un un;
+    memset(&un, 0, sizeof(un));
+    un.sun_family = AF_UNIX;
+    int path_len = strlcpy(un.sun_path, sock_path, sizeof(un.sun_path));
+    if (path_len >= sizeof(un.sun_path)) {
+        fprintf(stderr, "Socket path too long!");
+        return -1;
     }
-    http_headers = curl_slist_append(http_headers, x_gecos);
 
-    char *ssh_client = getenv("SSH_CLIENT");
-    if (ssh_client) {
-        char *x_ssh_client = NULL;
-        result = asprintf(&x_ssh_client, "X-Ssh-Client: %s", getenv("SSH_CLIENT"));
-        if (result < 0 || x_ssh_client == NULL) {
-            perror(PACKAGE ": asprintf");
-            exit(1);
+    int size = offsetof(struct sockaddr_un, sun_path) + path_len;
+    if (connect(sock_fd, (struct sockaddr *)&un, size) < 0) {
+        fprintf(stderr, "Unable to connect to %s", sock_path);
+        return -1;
+    }
+
+    /* transmit ttyspy request */
+    ssize_t bytes_sent = 0;
+    char *pos = (char *)req;
+    while (bytes_sent < sizeof(struct TTYSpyRequest)) {
+        ssize_t len = write(sock_fd, pos,
+                sizeof(struct TTYSpyRequest) - bytes_sent);
+        if (len < 0) {
+            perror("write");
+            close(sock_fd);
+            return -1;
         }
-        http_headers = curl_slist_append(http_headers, x_ssh_client);
+        pos += len;
+        bytes_sent += len;
     }
 
-    return http_headers;
+    return sock_fd;
 }
 
 static void
