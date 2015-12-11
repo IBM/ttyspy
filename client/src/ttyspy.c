@@ -311,48 +311,53 @@ write_all(int fd, const void *src, size_t nbyte) {
 
 static void
 exec_shell_or_command(const char *shell, int argc, char *argv[]) {
-    /* If additional filter specified as argument exec it passing the
-     * remaining arguments */
-    if (argc > 1) {
-        char **new_argv = malloc(argc * sizeof(char *));
-        if (new_argv == NULL) {
-            perror(PACKAGE ": malloc");
-            exit(1);
-        }
-
-        for (int i = 0; i < argc - 1; i++)
-            new_argv[i] = argv[i + 1];
-        new_argv[argc - 1] = NULL;
-
-        execvp(new_argv[0], new_argv);
-        perror(PACKAGE ": exec");
-        exit(1);
-    }
-
-    /* If an SSH command was specified run it */
+    char **new_argv = NULL;
     const char *ssh_orig_cmd = getenv("SSH_ORIGINAL_COMMAND");
-    if (ssh_orig_cmd != NULL) {
-        char **new_argv = malloc(4 * sizeof(char *));
-        if (new_argv == NULL) {
-            perror(PACKAGE ": malloc");
-            exit(1);
-        }
-        new_argv[0] = (char *)shell;
-        new_argv[1] = "-c";
-        new_argv[2] =(char *) ssh_orig_cmd;
-        new_argv[3] = NULL;
 
-        execv(new_argv[0], new_argv);
-        perror(PACKAGE ": exec");
+    /* For debugging 
+    if (1) {
+        printf("args = {");
+        for (int i = 0; i < argc; i++) {
+            if (i > 0)
+                printf(", ");
+            printf("\"%s\"", argv[i]);
+        }
+        printf("}\n");
+    }
+     */
+
+    if (argc > 0) {
+        /* If additional filter specified as argument exec it passing the
+         * remaining arguments */
+
+        new_argv = argv;
+    } else if (ssh_orig_cmd != NULL) {
+        /* If an SSH command was specified run it */
+
+        new_argv = malloc(4 * sizeof(char *));
+        if (new_argv != NULL) {
+            new_argv[0] = (char *)shell;
+            new_argv[1] = "-c";
+            new_argv[2] = (char *)ssh_orig_cmd;
+            new_argv[3] = NULL;
+        }
+    } else {
+        /* Otherwise spawn the user's login shell */
+
+        new_argv = malloc(3 * sizeof(char *));
+        if (new_argv != NULL) {
+            new_argv[0] = (char *)shell;
+            new_argv[1] = "-l";
+            new_argv[2] = NULL;
+        }
+    }
+
+    if (new_argv == NULL) {
+        perror("malloc new argv");
         exit(1);
     }
 
-    /* Otherwise spawn the user's login shell */
-    char **new_argv = malloc(3 * sizeof(char *));
-    new_argv[0] = (char *)shell;
-    new_argv[1] = "-l";
-    new_argv[2] = NULL;
     execv(new_argv[0], new_argv);
-    perror(PACKAGE ": exec");
+    fprintf(stderr, "Unable to exec %s: %s\nA fully qualified path is required.\n", new_argv[0], strerror(errno));
     exit(1);
 }
