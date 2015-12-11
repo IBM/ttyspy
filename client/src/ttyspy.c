@@ -30,6 +30,7 @@ static void usage() __attribute__ ((noreturn));
 static void sig_handler(int);
 static struct TTYSpyRequest *build_request();
 static int open_ttyspy_session(const char *);
+static ssize_t write_all(int, const void *, size_t);
 static void exec_shell_or_command(const char *, int , char *[]) __attribute__ ((noreturn));
 
 
@@ -122,7 +123,9 @@ main(int argc, char *argv[]) {
         close(slave);
 
         /* Fork a child to handle streaming the session to the logging server */
-        int transcript_pipe = open_ttyspy_session(config->socket);
+        int ttyspyd_sock = open_ttyspy_session(config->socket);
+
+
 
         /* Set local terminal to raw mode */
         struct termios rawterm = term;
@@ -166,23 +169,23 @@ main(int argc, char *argv[]) {
                 break;
             }
             if (FD_ISSET(STDIN_FILENO, &rfds)) {
-                result = read(STDIN_FILENO, buffer, sizeof(buffer));
-                if (result < 0) {
+                ssize_t len = read(STDIN_FILENO, buffer, sizeof(buffer));
+                if (len < 0) {
                     perror(PACKAGE ": read STDIN");
                     break;
                 }
-                result = write(master, buffer, result);
+                result = write_all(master, buffer, len);
                 /* XXX ignored */
             }
             if (FD_ISSET(master, &rfds)) {
-                result = read(master, buffer, sizeof(buffer));
-                if (result < 0) {
+                ssize_t len = read(master, buffer, sizeof(buffer));
+                if (len < 0) {
                     perror(PACKAGE ": read pty");
                     break;
                 }
-                result = write(STDOUT_FILENO, buffer, result);
+                result = write_all(STDOUT_FILENO, buffer, len);
                 /* XXX ignored */
-                result = write(transcript_pipe, buffer, result);
+                result = write_all(ttyspyd_sock, buffer, len);
                 /* XXX ignored */
             }
         }
@@ -282,21 +285,28 @@ open_ttyspy_session(const char *sock_path) {
     }
 
     /* transmit ttyspy request */
-    ssize_t bytes_sent = 0;
-    char *pos = (char *)req;
-    while (bytes_sent < sizeof(struct TTYSpyRequest)) {
-        ssize_t len = write(sock_fd, pos,
-                sizeof(struct TTYSpyRequest) - bytes_sent);
-        if (len < 0) {
-            perror("write");
-            close(sock_fd);
-            return -1;
-        }
-        pos += len;
-        bytes_sent += len;
+    if (write_all(sock_fd, req, sizeof(struct TTYSpyRequest)) < 0) {
+        perror("write");
+        return -1;
     }
 
     return sock_fd;
+}
+
+static ssize_t
+write_all(int fd, const void *src, size_t nbyte) {
+    size_t bytes_written = 0;
+    const char *pos = (const char *)src;
+    while (bytes_written < nbyte) {
+        ssize_t result = write(fd, pos, nbyte - bytes_written);
+        if (result < 0) {
+            return result;
+        }
+        pos += result;
+        bytes_written += result;
+    }
+
+    return 0;
 }
 
 static void

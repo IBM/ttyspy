@@ -1,5 +1,1 @@
  * Drop privileges to user specified in configuration when starting ttyspyd
- * Handle partial writes in select() loop: presently we silently discard output
-   if either the user's PTY or archive server is slow and only accepts a
-   partial write. This can result in corrupted transmissions when a large
-   volume of data is transfered.
