@@ -1,1 +1,2 @@
  * Drop privileges to user specified in configuration when starting ttyspyd
+ * Log to syslog (including username in ident string) rather than stderr so not to interfer with scp
