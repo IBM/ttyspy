@@ -9,6 +9,7 @@ static int accept_endpoint(struct Config *, char *);
 static int accept_ca_path(struct Config *, char *);
 static int accept_cert_path(struct Config *, char *);
 static int accept_key_path(struct Config *, char *);
+static int accept_socket(struct Config *, char *);
 
 
 static struct Keyword global_grammar[] = {
@@ -32,6 +33,11 @@ static struct Keyword global_grammar[] = {
         (int(*)(void *, char *))accept_key_path,
         NULL,
         NULL},
+    { "socket",
+        NULL,
+        (int(*)(void *, char *))accept_socket,
+        NULL,
+        NULL},
     { NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -48,7 +54,7 @@ load_config(const char *filename) {
 
         FILE *file = fopen(filename, "r");
         if (file == NULL) {
-            fprintf(stderr, "%s: unable to open configuration file: %s", __func__, filename);
+            fprintf(stderr, "%s: unable to open configuration file: %s\n", __func__, filename);
             return NULL;
         }
 
@@ -56,7 +62,7 @@ load_config(const char *filename) {
             long whence = ftell(file);
             char buffer[256];
 
-            fprintf(stderr, "error parsing %s at %ld near:", filename, whence);
+            fprintf(stderr, "error parsing %s at %ld near:\n", filename, whence);
             fseek(file, -20, SEEK_CUR);
             for (int i = 0; i < 5; i++)
                 fprintf(stderr, "%ld\t%s", ftell(file), fgets(buffer, sizeof(buffer), file));
@@ -110,6 +116,17 @@ static int
 accept_key_path(struct Config *config, char *key_path) {
     config->key_path = strdup(key_path);
     if (config->key_path == NULL) {
+        perror("strdup");
+        return -1;
+    }
+
+    return 1;
+}
+
+static int
+accept_socket(struct Config *config, char *socket) {
+    config->socket = strdup(socket);
+    if (config->socket == NULL) {
         perror("strdup");
         return -1;
     }
