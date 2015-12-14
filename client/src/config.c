@@ -10,6 +10,7 @@ static int accept_ca_path(struct Config *, char *);
 static int accept_cert_path(struct Config *, char *);
 static int accept_key_path(struct Config *, char *);
 static int accept_socket(struct Config *, char *);
+static int accept_username(struct Config *, char *);
 
 
 static struct Keyword global_grammar[] = {
@@ -38,6 +39,11 @@ static struct Keyword global_grammar[] = {
         (int(*)(void *, char *))accept_socket,
         NULL,
         NULL},
+    { "username",
+        NULL,
+        (int(*)(void *, char *))accept_username,
+        NULL,
+        NULL},
     { NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -51,6 +57,8 @@ load_config(const char *filename) {
         config->ca_path = NULL;
         config->cert_path = NULL;
         config->key_path = NULL;
+        config->socket = NULL;
+        config->username = NULL;
 
         FILE *file = fopen(filename, "r");
         if (file == NULL) {
@@ -76,7 +84,24 @@ load_config(const char *filename) {
             config->key_path = strdup(config->cert_path);
     }
 
-    return config;
+    int config_ok = 1;
+    if (config->socket == NULL) {
+        fprintf(stderr, "socket not defined in configuration file: %s\n", filename);
+        config_ok = 0;
+    }
+    if (config->username == NULL) {
+        fprintf(stderr, "username not defined in configuration file: %s\n", filename);
+        config_ok = 0;
+    }
+    if (config->endpoint == NULL) {
+        fprintf(stderr, "endpoint not defined in configuration file: %s\n", filename);
+        config_ok = 0;
+    }
+
+    if (config_ok)
+        return config;
+    else
+        return NULL;
 }
 
 static int
@@ -127,6 +152,17 @@ static int
 accept_socket(struct Config *config, char *socket) {
     config->socket = strdup(socket);
     if (config->socket == NULL) {
+        perror("strdup");
+        return -1;
+    }
+
+    return 1;
+}
+
+static int
+accept_username(struct Config *config, char *username) {
+    config->username = strdup(username);
+    if (config->username == NULL) {
         perror("strdup");
         return -1;
     }
