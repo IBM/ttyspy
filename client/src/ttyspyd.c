@@ -193,12 +193,17 @@ listening_unix_socket(const char *sock_path) {
         return -1;
     }
 
+    /* Ensure permissions allow all users to connect to socket */
+    mode_t old_umask = umask(0);
+
     int size = offsetof(struct sockaddr_un, sun_path) + path_len;
     result = bind(fd, (struct sockaddr *)&un, size);
     if (result < 0) {
         perror("bind");
         return -1;
     }
+
+    umask(old_umask);
 
     result = listen(fd, SOMAXCONN);
     if (result < 0) {
