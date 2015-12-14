@@ -19,6 +19,7 @@
 
 
 static void usage();
+static void perror_exit(const char *);
 static int listening_unix_socket(const char *);
 static void sig_handler(int);
 static int uploader(struct Config *, int);
@@ -56,15 +57,31 @@ main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Create listening socket */
-    int sock_fd = listening_unix_socket(config->socket);
-    if (sock_fd < 0) {
-        perror("socket");
-        return 1;
+    struct passwd *user = getpwnam(config->username);
+    if (user == NULL) {
+        fprintf(stderr, "Unable to find user %s\n", config->username);
+        return 0;
     }
 
+    /* Create listening socket */
+    int sock_fd = listening_unix_socket(config->socket);
+    if (sock_fd < 0)
+        perror_exit("listening_unix_socket()");
+
     if (!foreground_flag) {
-        /* TODO drop privileges */
+        /* drop privileges if launched as root */
+        if (geteuid() == 0) {
+            /* including any supplementary groups */
+            if (setgroups(1, &user->pw_gid) < 0)
+                perror_exit("setgroups()");
+
+            if (setgid(user->pw_gid) < 0)
+                perror_exit("setgid()");
+
+            if (setuid(user->pw_uid) < 0)
+                perror_exit("setuid()");
+        }
+
         if (daemon(0,0) < 0) {
             perror("daemon");
             return 1;
@@ -113,6 +130,12 @@ static void
 usage() {
     fprintf(stderr, PACKAGE ": ttyspy server\nusage: ttyspyd [-c <config_file>] [-f]\n");
     exit(1);
+}
+
+static void
+perror_exit(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
 }
 
 static void

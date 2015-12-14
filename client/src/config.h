@@ -8,6 +8,7 @@ struct Config {
     char *key_path;
     char *ca_path;
     char *socket;
+    char *username;
 };
 
 

@@ -10,6 +10,7 @@ static int accept_ca_path(struct Config *, char *);
 static int accept_cert_path(struct Config *, char *);
 static int accept_key_path(struct Config *, char *);
 static int accept_socket(struct Config *, char *);
+static int accept_username(struct Config *, char *);
 
 
 static struct Keyword global_grammar[] = {
@@ -36,6 +37,11 @@ static struct Keyword global_grammar[] = {
     { "socket",
         NULL,
         (int(*)(void *, char *))accept_socket,
+        NULL,
+        NULL},
+    { "username",
+        NULL,
+        (int(*)(void *, char *))accept_username,
         NULL,
         NULL},
     { NULL, NULL, NULL, NULL, NULL }
@@ -127,6 +133,17 @@ static int
 accept_socket(struct Config *config, char *socket) {
     config->socket = strdup(socket);
     if (config->socket == NULL) {
+        perror("strdup");
+        return -1;
+    }
+
+    return 1;
+}
+
+static int
+accept_username(struct Config *config, char *username) {
+    config->username = strdup(username);
+    if (config->username == NULL) {
         perror("strdup");
         return -1;
     }
