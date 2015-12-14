@@ -1,4 +1,5 @@
-bin_PROGRAMS = ttyspy ttyspyd
+bin_PROGRAMS = ttyspy
+sbin_PROGRAMS = ttyspyd
 ttyspy_SOURCES = ttyspy.c \
 		cfg_parser.c \
 		cfg_parser.h \
