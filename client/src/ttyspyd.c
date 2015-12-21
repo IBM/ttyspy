@@ -22,7 +22,7 @@ static void usage();
 static void perror_exit(const char *);
 static int listening_unix_socket(const char *);
 static void sig_handler(int);
-static int uploader(struct Config *, int);
+static int uploader(struct Config *, int, int *, char *[]);
 static struct curl_slist *build_http_headers(const struct TTYSpyRequest *, const struct passwd *);
 
 
@@ -44,8 +44,6 @@ main(int argc, char *argv[]) {
                 usage();
         }
     }
-    argc -= optind;
-    argv += optind;
 
     /* Read configuration */
     struct Config *config = load_config(config_file);
@@ -114,7 +112,7 @@ main(int argc, char *argv[]) {
         /* client */
         close(sock_fd);
 
-        uploader(config, client_fd);
+        uploader(config, client_fd, &argc, argv);
 
         exit(0);
     }
@@ -210,7 +208,7 @@ listening_unix_socket(const char *sock_path) {
 }
 
 static int
-uploader(struct Config *config, int sock_fd) {
+uploader(struct Config *config, int sock_fd, int *argc_ptr, char *argv[]) {
     struct TTYSpyRequest *req = malloc(sizeof(struct TTYSpyRequest));
     if (req == NULL) {
         perror("malloc");
@@ -228,6 +226,13 @@ uploader(struct Config *config, int sock_fd) {
     if (user == NULL) {
         fprintf(stderr, "Unable to find user for uid=%d, gid=%d\n", uid, gid);
         return 0;
+    }
+
+    char *new_proc_name = NULL;
+    int ret = asprintf(&new_proc_name, "%s [client %s]", argv[0], user->pw_name);
+    if (ret > 0) {
+        argv[0] = new_proc_name;
+        *argc_ptr = 1;
     }
 
     /* Read complete header */
