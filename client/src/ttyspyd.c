@@ -26,13 +26,10 @@ static int uploader(struct Config *, int);
 static struct curl_slist *build_http_headers(const struct TTYSpyRequest *, const struct passwd *);
 
 
-static const char *default_config_file = "/etc/ttyspy.conf";
-
-
 int
 main(int argc, char *argv[]) {
     int ch, foreground_flag = 0;
-    const char *config_file = default_config_file;
+    const char *config_file = NULL;
 
     while ((ch = getopt(argc, argv, "c:f")) != -1) {
         switch (ch) {
@@ -47,15 +44,11 @@ main(int argc, char *argv[]) {
                 usage();
         }
     }
-    argc -= optind;
-    argv += optind;
 
     /* Read configuration */
     struct Config *config = load_config(config_file);
-    if (config == NULL) {
-        fprintf(stderr, "Error loading config file: %s\n", config_file);
+    if (config == NULL)
         return 1;
-    }
 
     struct passwd *user = getpwnam(config->username);
     if (user == NULL) {
@@ -87,6 +80,7 @@ main(int argc, char *argv[]) {
             return 1;
         }
     }
+    setproctitle("[listener]");
 
     /* handle SIGCHLD */
     struct sigaction sa = {
@@ -118,6 +112,7 @@ main(int argc, char *argv[]) {
 
         /* client */
         close(sock_fd);
+        setproctitle("[accepted]");
 
         uploader(config, client_fd);
 
@@ -235,6 +230,8 @@ uploader(struct Config *config, int sock_fd) {
         return 0;
     }
 
+    setproctitle("[client %s]", user->pw_name);
+
     /* Read complete header */
     ssize_t bytes_read = 0;
     char *pos = (char *)req;
@@ -247,6 +244,8 @@ uploader(struct Config *config, int sock_fd) {
         pos += len;
         bytes_read += len;
     }
+
+    setproctitle("[client %s:%s]", user->pw_name, req->login_tty);
 
     curl_global_init(CURL_GLOBAL_ALL);
     CURL *curl = curl_easy_init();

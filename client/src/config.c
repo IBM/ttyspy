@@ -13,6 +13,7 @@ static int accept_socket(struct Config *, char *);
 static int accept_username(struct Config *, char *);
 
 
+static const char *default_config_file = "/etc/ttyspy.conf";
 static struct Keyword global_grammar[] = {
     { "endpoint",
         NULL,
@@ -50,6 +51,9 @@ static struct Keyword global_grammar[] = {
 
 struct Config *
 load_config(const char *filename) {
+    if (filename == NULL)
+        filename = default_config_file;
+
     struct Config *config = malloc(sizeof(struct Config));
     if (config != NULL) {
         /* Initialize empty config */
