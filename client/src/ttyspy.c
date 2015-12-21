@@ -34,7 +34,6 @@ static ssize_t write_all(int, const void *, size_t);
 static void exec_shell_or_command(const char *, int , char *[]) __attribute__ ((noreturn));
 
 
-static const char *default_config_file = "/etc/ttyspy.conf";
 /* global so we can pass along window size change from signal handler: */
 static int master;
 
@@ -42,7 +41,7 @@ static int master;
 int
 main(int argc, char *argv[]) {
     int ch;
-    const char *config_file = default_config_file;
+    const char *config_file = NULL;
 
     while ((ch = getopt(argc, argv, "c:")) != -1) {
         switch (ch) {
@@ -59,9 +58,8 @@ main(int argc, char *argv[]) {
 
     /* Read configuration */
     struct Config *config = load_config(config_file);
-    if (config == NULL) {
+    if (config == NULL)
         return 1;
-    }
 
     /* Gather user info */
     struct passwd *user = getpwuid(getuid());
@@ -314,7 +312,7 @@ exec_shell_or_command(const char *shell, int argc, char *argv[]) {
     char **new_argv = NULL;
     const char *ssh_orig_cmd = getenv("SSH_ORIGINAL_COMMAND");
 
-    /* For debugging 
+    /* For debugging
     if (1) {
         printf("args = {");
         for (int i = 0; i < argc; i++) {

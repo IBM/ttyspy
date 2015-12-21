@@ -26,13 +26,10 @@ static int uploader(struct Config *, int);
 static struct curl_slist *build_http_headers(const struct TTYSpyRequest *, const struct passwd *);
 
 
-static const char *default_config_file = "/etc/ttyspy.conf";
-
-
 int
 main(int argc, char *argv[]) {
     int ch, foreground_flag = 0;
-    const char *config_file = default_config_file;
+    const char *config_file = NULL;
 
     while ((ch = getopt(argc, argv, "c:f")) != -1) {
         switch (ch) {
@@ -52,10 +49,8 @@ main(int argc, char *argv[]) {
 
     /* Read configuration */
     struct Config *config = load_config(config_file);
-    if (config == NULL) {
-        fprintf(stderr, "Error loading config file: %s\n", config_file);
+    if (config == NULL)
         return 1;
-    }
 
     struct passwd *user = getpwnam(config->username);
     if (user == NULL) {
