@@ -22,7 +22,7 @@ static void usage();
 static void perror_exit(const char *);
 static int listening_unix_socket(const char *);
 static void sig_handler(int);
-static int uploader(struct Config *, int, int *, char *[]);
+static int uploader(struct Config *, int);
 static struct curl_slist *build_http_headers(const struct TTYSpyRequest *, const struct passwd *);
 
 
@@ -80,6 +80,7 @@ main(int argc, char *argv[]) {
             return 1;
         }
     }
+    setproctitle("[listener]");
 
     /* handle SIGCHLD */
     struct sigaction sa = {
@@ -111,8 +112,9 @@ main(int argc, char *argv[]) {
 
         /* client */
         close(sock_fd);
+        setproctitle("[accepted]");
 
-        uploader(config, client_fd, &argc, argv);
+        uploader(config, client_fd);
 
         exit(0);
     }
@@ -208,7 +210,7 @@ listening_unix_socket(const char *sock_path) {
 }
 
 static int
-uploader(struct Config *config, int sock_fd, int *argc_ptr, char *argv[]) {
+uploader(struct Config *config, int sock_fd) {
     struct TTYSpyRequest *req = malloc(sizeof(struct TTYSpyRequest));
     if (req == NULL) {
         perror("malloc");
@@ -228,12 +230,7 @@ uploader(struct Config *config, int sock_fd, int *argc_ptr, char *argv[]) {
         return 0;
     }
 
-    char *new_proc_name = NULL;
-    int ret = asprintf(&new_proc_name, "%s [client %s]", argv[0], user->pw_name);
-    if (ret > 0) {
-        argv[0] = new_proc_name;
-        *argc_ptr = 1;
-    }
+    setproctitle("[client %s]", user->pw_name);
 
     /* Read complete header */
     ssize_t bytes_read = 0;
@@ -247,6 +244,8 @@ uploader(struct Config *config, int sock_fd, int *argc_ptr, char *argv[]) {
         pos += len;
         bytes_read += len;
     }
+
+    setproctitle("[client %s:%s]", user->pw_name, req->login_tty);
 
     curl_global_init(CURL_GLOBAL_ALL);
     CURL *curl = curl_easy_init();
