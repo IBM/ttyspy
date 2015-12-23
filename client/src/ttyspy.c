@@ -81,6 +81,18 @@ main(int argc, char *argv[]) {
     }
     openlog(ident, LOG_PID, LOG_DAEMON);
 
+    if (!isatty(STDIN_FILENO)) {
+        syslog(LOG_NOTICE, "STDIN is not a tty");
+
+        int ttyspyd_sock = open_ttyspy_session(config->socket);
+        FILE *session = fdopen(ttyspyd_sock, "w");
+        fprintf(session, "Non tty session initiated.\n");
+        fprintf(session, "SSH_ORIGINAL_COMMAND=%s\n", getenv("SSH_ORIGINAL_COMMAND"));
+        fclose(session);
+
+        exec_shell_or_command(user->pw_shell, argc, argv);
+    }
+
     /* Get terminal settings */
     struct termios term;
     result = tcgetattr(STDIN_FILENO, &term);
@@ -130,10 +142,7 @@ main(int argc, char *argv[]) {
         /* Parent */
         close(slave);
 
-        /* Fork a child to handle streaming the session to the logging server */
         int ttyspyd_sock = open_ttyspy_session(config->socket);
-
-
 
         /* Set local terminal to raw mode */
         struct termios rawterm = term;
