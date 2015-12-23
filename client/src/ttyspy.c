@@ -72,9 +72,9 @@ main(int argc, char *argv[]) {
     /* Skip ttyspy for root */
     if (user->pw_uid == 0)
         exec_shell_or_command(user->pw_shell, argc, argv);
-    
+
     char *ident = NULL;
-    int result = asprintf(&ident, "%s (%s %s)", PACKAGE, user->pw_name, ctermid(NULL));
+    int result = asprintf(&ident, "%s (%s)", PACKAGE, user->pw_name);
     if (result < 0) {
         perror("asprintf");
         return 1;
@@ -224,7 +224,7 @@ sig_handler(int signo) {
         result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
         if (result < 0) {
             syslog(LOG_INFO, "ioctl TIOCGWINSZ: %s", strerror(errno));
-            
+
             break;
         }
         ioctl(master, TIOCSWINSZ, &win);
@@ -270,7 +270,7 @@ static int
 open_ttyspy_session(const char *sock_path) {
     struct TTYSpyRequest *req = build_request();
     if (req == NULL) {
-        syslog(LOG_ERR, "build_request: %s", strerror(errno)); 
+        syslog(LOG_ERR, "build_request: %s", strerror(errno));
         return -1;
     }
 
