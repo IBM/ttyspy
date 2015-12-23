@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <termios.h>
 #include <unistd.h>
 #ifdef HAVE_UTIL_H
@@ -71,38 +72,47 @@ main(int argc, char *argv[]) {
     /* Skip ttyspy for root */
     if (user->pw_uid == 0)
         exec_shell_or_command(user->pw_shell, argc, argv);
+    
+    char *ident = NULL;
+    int result = asprintf(&ident, "%s (%s %s)", PACKAGE, user->pw_name, ctermid(NULL));
+    if (result < 0) {
+        perror("asprintf");
+        return 1;
+    }
+    openlog(ident, LOG_PID, LOG_DAEMON);
 
     /* Get terminal settings */
     struct termios term;
-    int result = tcgetattr(STDIN_FILENO, &term);
+    result = tcgetattr(STDIN_FILENO, &term);
     if (result < 0) {
-        perror(PACKAGE ": tcgetattr");
+        syslog(LOG_INFO, "tcgetattr: %s", strerror(errno));
     }
 
     struct winsize win;
     result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
     if (result < 0) {
-        perror(PACKAGE ": ioctl TIOCGWINSZ");
+        syslog(LOG_INFO, "ioctl TIOCGWINSZ: %s", strerror(errno));
     }
 
     /* Allocate a PTY */
     int slave = -1;
     int ret = openpty(&master, &slave, NULL, &term, &win);
     if (ret < 0) {
-        perror(PACKAGE ": openpty");
+        syslog(LOG_ERR, "openpty: %s", strerror(errno));
 
         /* exec shell */
-
+        syslog(LOG_ERR, "Unable to log current session, falling back to unlogged sesssion");
         exec_shell_or_command(user->pw_shell, argc, argv);
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        perror(PACKAGE ": fork");
+        syslog(LOG_ERR, "fork: %s", strerror(errno));
         close(slave);
         close(master);
 
         /* exec shell */
+        syslog(LOG_ERR, "Unable to log current session, falling back to unlogged sesssion");
         exec_shell_or_command(user->pw_shell, argc, argv);
     } else if (pid == 0) {
         /* Child */
@@ -110,7 +120,7 @@ main(int argc, char *argv[]) {
         /* Setup file descriptors */
         close(master);
         if (login_tty(slave) < 0) {
-            perror(PACKAGE ": login_tty");
+            syslog(LOG_ERR, "login_tty: %s", strerror(errno));
             exit(1);
         }
 
@@ -157,7 +167,7 @@ main(int argc, char *argv[]) {
             if (result < 0 && errno == EINTR) /* received signal */
                 continue;
             if (result < 0) {
-                perror(PACKAGE ": select");
+                syslog(LOG_INFO, "select: %s", strerror(errno));
                 break;
             }
             if (FD_ISSET(STDIN_FILENO, &efds)) {
@@ -169,7 +179,7 @@ main(int argc, char *argv[]) {
             if (FD_ISSET(STDIN_FILENO, &rfds)) {
                 ssize_t len = read(STDIN_FILENO, buffer, sizeof(buffer));
                 if (len < 0) {
-                    perror(PACKAGE ": read STDIN");
+                    syslog(LOG_INFO, "read STDIN: %s", strerror(errno));
                     break;
                 }
                 result = write_all(master, buffer, len);
@@ -178,7 +188,7 @@ main(int argc, char *argv[]) {
             if (FD_ISSET(master, &rfds)) {
                 ssize_t len = read(master, buffer, sizeof(buffer));
                 if (len < 0) {
-                    perror(PACKAGE ": read pty");
+                    syslog(LOG_INFO, "read pty: %s", strerror(errno));
                     break;
                 }
                 result = write_all(STDOUT_FILENO, buffer, len);
@@ -190,7 +200,7 @@ main(int argc, char *argv[]) {
 
         /* Reset terminal */
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
-        fprintf(stderr, PACKAGE " exiting...\n");
+        syslog(LOG_INFO, "exiting...");
     }
 
     return 0;
@@ -213,7 +223,8 @@ sig_handler(int signo) {
     case SIGWINCH:
         result = ioctl(STDIN_FILENO, TIOCGWINSZ, &win);
         if (result < 0) {
-            perror(PACKAGE ": ioctl TIOCGWINSZ");
+            syslog(LOG_INFO, "ioctl TIOCGWINSZ: %s", strerror(errno));
+            
             break;
         }
         ioctl(master, TIOCSWINSZ, &win);
@@ -222,16 +233,16 @@ sig_handler(int signo) {
         do {
             pid = waitpid(-1, &status, WNOHANG);
             if (pid > 0)
-                fprintf(stderr, PACKAGE ": child [%d] terminated with %d\n", pid, status);
+                syslog(LOG_INFO, "child [%d] terminated with %d\n", pid, status);
             if (pid < 0 && errno != ECHILD)
-                perror(PACKAGE ": waitpid");
+                syslog(LOG_ERR, "waitpid: %s", strerror(errno));
         } while (pid > 0);
         break;
     case SIGPIPE:
         /* noop */
         break;
     default:
-        fprintf(stderr, PACKAGE ": received signal %d\n", signo);
+        syslog(LOG_NOTICE, "received signal %d\n", signo);
         break;
     }
 }
@@ -259,32 +270,34 @@ static int
 open_ttyspy_session(const char *sock_path) {
     struct TTYSpyRequest *req = build_request();
     if (req == NULL) {
-        perror("build_request");
+        syslog(LOG_ERR, "build_request: %s", strerror(errno)); 
         return -1;
     }
 
     int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd < 0)
+    if (sock_fd < 0) {
+        syslog(LOG_ERR, "socket: %s", strerror(errno));
         return -1;
+    }
 
     struct sockaddr_un un;
     memset(&un, 0, sizeof(un));
     un.sun_family = AF_UNIX;
     int path_len = strlcpy(un.sun_path, sock_path, sizeof(un.sun_path));
     if (path_len >= sizeof(un.sun_path)) {
-        fprintf(stderr, "Socket path too long!");
+        syslog(LOG_INFO, "Socket path is tool long!");
         return -1;
     }
 
     int size = offsetof(struct sockaddr_un, sun_path) + path_len;
     if (connect(sock_fd, (struct sockaddr *)&un, size) < 0) {
-        fprintf(stderr, "Unable to connect to %s", sock_path);
+        syslog(LOG_ERR, "Unable to connect to %s: %s", sock_path, strerror(errno));
         return -1;
     }
 
     /* transmit ttyspy request */
     if (write_all(sock_fd, req, sizeof(struct TTYSpyRequest)) < 0) {
-        perror("write");
+        syslog(LOG_INFO, "write: %s", strerror(errno));
         return -1;
     }
 
