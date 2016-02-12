@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <unistd.h>
 #include <curl/curl.h>
 #include "config.h"
@@ -50,9 +51,11 @@ main(int argc, char *argv[]) {
     if (config == NULL)
         return 1;
 
+    openlog("ttyspyd", LOG_PERROR|LOG_PID, LOG_DAEMON);
+
     struct passwd *user = getpwnam(config->username);
     if (user == NULL) {
-        fprintf(stderr, "Unable to find user %s\n", config->username);
+        syslog(LOG_ERR, "Unable to find user %s\n", config->username);
         return 0;
     }
 
@@ -76,7 +79,7 @@ main(int argc, char *argv[]) {
         }
 
         if (daemon(0,0) < 0) {
-            perror("daemon");
+            syslog(LOG_ERR, "daemon: %s", strerror(errno));
             return 1;
         }
     }
@@ -95,13 +98,13 @@ main(int argc, char *argv[]) {
     for(;;) {
         int client_fd = accept(sock_fd, NULL, 0);
         if (client_fd < 0) {
-            perror("accept");
+            syslog(LOG_ERR, "accept: %s", strerror(errno));
             continue;
         }
 
         pid_t pid = fork();
         if (pid < 0) {
-            perror("fork");
+            syslog(LOG_ERR, "fork: %s", strerror(errno));
             close(client_fd);
             continue;
         } else if (pid > 0) {
@@ -129,6 +132,7 @@ usage() {
 
 static void
 perror_exit(const char *msg) {
+    syslog(LOG_ERR, "%s", msg);
     perror(msg);
     exit(EXIT_FAILURE);
 }
@@ -143,16 +147,16 @@ sig_handler(int signo) {
         do {
             pid = waitpid(-1, &status, WNOHANG);
             if (pid > 0)
-                fprintf(stderr, "child [%d] terminated with %d\n", pid, status);
+                syslog(LOG_INFO, "child [%d] terminated with %d\n", pid, status);
             if (pid < 0 && errno != ECHILD)
-                perror("waitpid");
+                syslog(LOG_WARNING, "waitpid: %s", strerror(errno));
         } while (pid > 0);
         break;
     case SIGPIPE:
         /* noop */
         break;
     default:
-        fprintf(stderr, "received signal %d\n", signo);
+        syslog(LOG_NOTICE, "received signal %d\n", signo);
         break;
     }
 }
@@ -166,7 +170,7 @@ listening_unix_socket(const char *sock_path) {
     struct stat sb;
     int result = lstat(sock_path, &sb);
     if (result < 0 && errno != ENOENT) {
-        perror("lstat");
+        syslog(LOG_ERR, "lstat: %s", strerror(errno));
         return -1;
     }
     if (result == 0) {
@@ -174,7 +178,7 @@ listening_unix_socket(const char *sock_path) {
             /* Existing socket: delete it */
             unlink(sock_path);
         } else {
-            fprintf(stderr, "Socket already exists: %s", sock_path);
+            syslog(LOG_ERR, "Socket already exists: %s", sock_path);
             return -1;
         }
     }
@@ -184,7 +188,7 @@ listening_unix_socket(const char *sock_path) {
     un.sun_family = AF_UNIX;
     int path_len = strlcpy(un.sun_path, sock_path, sizeof(un.sun_path));
     if (path_len >= sizeof(un.sun_path)) {
-        fprintf(stderr, "Socket path too long!");
+        syslog(LOG_ERR, "Socket path too long!");
         return -1;
     }
 
@@ -194,7 +198,7 @@ listening_unix_socket(const char *sock_path) {
     int size = offsetof(struct sockaddr_un, sun_path) + path_len;
     result = bind(fd, (struct sockaddr *)&un, size);
     if (result < 0) {
-        perror("bind");
+        syslog(LOG_ERR, "bind: %s", strerror(errno));
         return -1;
     }
 
@@ -202,7 +206,7 @@ listening_unix_socket(const char *sock_path) {
 
     result = listen(fd, SOMAXCONN);
     if (result < 0) {
-        perror("listen");
+        syslog(LOG_ERR, "listen: %s", strerror(errno));
         return -1;
     }
 
@@ -213,20 +217,20 @@ static int
 uploader(struct Config *config, int sock_fd) {
     struct TTYSpyRequest *req = malloc(sizeof(struct TTYSpyRequest));
     if (req == NULL) {
-        perror("malloc");
+        syslog(LOG_WARNING, "malloc: %s", strerror(errno));
         return 0;
     }
 
     uid_t uid;
     gid_t gid;
     if (getpeereid(sock_fd, &uid, &gid)) {
-        fprintf(stderr, "Unable to obtain peer credentials");
+        syslog(LOG_WARNING, "Unable to obtain peer credentials");
         return 0;
     }
 
     struct passwd *user = getpwuid(uid);
     if (user == NULL) {
-        fprintf(stderr, "Unable to find user for uid=%d, gid=%d\n", uid, gid);
+        syslog(LOG_ERR, "Unable to find user for uid=%d, gid=%d\n", uid, gid);
         return 0;
     }
 
@@ -238,7 +242,7 @@ uploader(struct Config *config, int sock_fd) {
     while (bytes_read < sizeof(struct TTYSpyRequest)) {
         ssize_t len = read(sock_fd, pos, sizeof(struct TTYSpyRequest) - bytes_read);
         if (len < 0) {
-            perror("read");
+            syslog(LOG_WARNING, "read: %s", strerror(errno));
             return 0;
         }
         pos += len;
@@ -267,9 +271,10 @@ uploader(struct Config *config, int sock_fd) {
 
     curl_easy_setopt(curl, CURLOPT_URL, config->endpoint);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
+
     FILE *transcript = fdopen(sock_fd, "r");
     if (transcript == NULL) {
-        perror("fdopen");
+        syslog(LOG_WARNING, "fdopen: %s", strerror(errno));
         exit(1);
     }
     curl_easy_setopt(curl, CURLOPT_READDATA, transcript);
@@ -283,7 +288,7 @@ uploader(struct Config *config, int sock_fd) {
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK)
-        fprintf(stderr, PACKAGE ": curl_easy_perform() failed: %s\n",
+        syslog(LOG_NOTICE, "curl_easy_perform() failed: %s\n",
                 curl_easy_strerror(res));
 
     curl_easy_cleanup(curl);
@@ -302,14 +307,14 @@ build_http_headers(const struct TTYSpyRequest *req, const struct passwd *user) {
     /* TODO store this at startup and reuse */
     char *hostname = malloc(256);
     if (hostname == NULL) {
-        perror(PACKAGE ": malloc");
+        syslog(LOG_WARNING, "malloc: %s", strerror(errno));
         exit(1);
     }
     gethostname(hostname, 256);
     char *x_hostname = NULL;
     result = asprintf(&x_hostname, "X-Hostname: %s", hostname);
     if (result < 0 || x_hostname == NULL) {
-        perror(PACKAGE ": asprinf");
+        syslog(LOG_WARNING, "asprinf: %s", strerror(errno));
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_hostname);
@@ -317,7 +322,7 @@ build_http_headers(const struct TTYSpyRequest *req, const struct passwd *user) {
     char *x_username = NULL;
     result = asprintf(&x_username, "X-Username: %s", user->pw_name);
     if (result < 0 || x_username == NULL) {
-        perror(PACKAGE ": asprintf");
+        syslog(LOG_WARNING, "asprintf: %s", strerror(errno));
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_username);
@@ -325,7 +330,7 @@ build_http_headers(const struct TTYSpyRequest *req, const struct passwd *user) {
     char *x_gecos = NULL;
     result = asprintf(&x_gecos, "X-Gecos: %s", user->pw_gecos);
     if (result < 0 || x_gecos == NULL) {
-        perror(PACKAGE ": asprintf");
+        syslog(LOG_WARNING, "asprintf: %s", strerror(errno));
         exit(1);
     }
     http_headers = curl_slist_append(http_headers, x_gecos);
@@ -334,7 +339,7 @@ build_http_headers(const struct TTYSpyRequest *req, const struct passwd *user) {
         char *x_ssh_client = NULL;
         result = asprintf(&x_ssh_client, "X-Ssh-Client: %s", req->ssh_client);
         if (result < 0 || x_ssh_client == NULL) {
-            perror(PACKAGE ": asprintf");
+            syslog(LOG_WARNING, "asprintf: %s", strerror(errno));
             exit(1);
         }
         http_headers = curl_slist_append(http_headers, x_ssh_client);
