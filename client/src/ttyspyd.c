@@ -223,11 +223,21 @@ uploader(struct Config *config, int sock_fd) {
 
     uid_t uid;
     gid_t gid;
+#if (defined __NetBSD__ || defined __FreeBSD__ || defined __OpenBSD__)
     if (getpeereid(sock_fd, &uid, &gid)) {
         syslog(LOG_WARNING, "Unable to obtain peer credentials");
         return 0;
     }
-
+#elif defined(__linux__)
+    struct ucred cr;
+    socklen_t crlen = sizeof(cr);
+    if (getsockopt(sock_fd, SOL_SOCKET, SO_PEERCRED, &cr, &crlen)) {
+        syslog(LOG_WARNING, "Unable to obtain peer credentials");
+        return 0;
+    }
+    uid = cr.uid;
+    gid = cr.gid;
+#endif
     struct passwd *user = getpwuid(uid);
     if (user == NULL) {
         syslog(LOG_ERR, "Unable to find user for uid=%d, gid=%d\n", uid, gid);
