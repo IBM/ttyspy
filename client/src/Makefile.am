@@ -17,6 +17,7 @@ ttyspyd_SOURCES = ttyspyd.c \
 		cfg_tokenizer.h \
 		config.c \
 		config.h \
+		bsd-getpeereid.c \
 		setproctitle.c \
 		strlcpy.c \
 		ttyspy_protocol.h
