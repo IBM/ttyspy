@@ -41,7 +41,7 @@ You need:
 1. A client certificate (with X509v3 [clientAuth extended key usage](https://www.openssl.org/docs/manmaster/apps/x509v3_config.html#Extended-Key-Usage)) signed by a CA
 2. A server certificate signed by a CA
 
-If you're unfamiliar with TLS certificate authentication, the client and server certs do _not_ have to be signed by the same CA.
+If you're unfamiliar with TLS certificate authentication, the client and server certs do _not_ have to be signed by the same CA. The CA file passed to `session_receiver` is used to validate the client cert, and the CA passed to `ttyspyd` is used to validate the server cert.
 `ttyspyd` will use the standard curl bundle for certificate auth if you don't give it a CA bundle.
 
 The logging server only has a route defined for POSTing to `/transcript`, so `endpoint` in `ttyspy.conf` will always be
