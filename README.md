@@ -27,7 +27,7 @@ in which these utilities would open the pipe prevented this method.
 
 ```
 cd client
-autoreconfig --install
+autoreconf --install
 ./configure
 make
 ```
