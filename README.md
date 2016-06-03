@@ -11,6 +11,9 @@ session archive server. To protect the contents of the terminal session and
 ensure the session is sent to the correct server, TLS with mutual certificate
 validation is used to authenticate both the client and server.
 
+See the [extended documentation](doc/ttyspy.md) for detailed information about
+the architecture and configuration.
+
 ## Client
 
 The client functions as script(1) with the typescript output file piped to
@@ -27,7 +30,7 @@ in which these utilities would open the pipe prevented this method.
 
 ```
 cd client
-autoreconfig --install
+autoreconf --install
 ./configure
 make
 ```
