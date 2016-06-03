@@ -7,6 +7,7 @@ ttyspy_SOURCES = ttyspy.c \
 		cfg_tokenizer.h \
 		config.c \
 		config.h \
+		strlcpy.c \
 		ttyspy_protocol.h
 ttyspy_LDADD = $(LIBUTIL)
 ttyspyd_SOURCES = ttyspyd.c \
@@ -16,6 +17,9 @@ ttyspyd_SOURCES = ttyspyd.c \
 		cfg_tokenizer.h \
 		config.c \
 		config.h \
+		bsd-getpeereid.c \
+		setproctitle.c \
+		strlcpy.c \
 		ttyspy_protocol.h
 ttyspyd_CPPFLAGS = $(LIBCURL_CPPFLAGS)
 ttyspyd_LDADD = $(LIBCURL)
