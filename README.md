@@ -1,6 +1,9 @@
 # ttyspy
 
-Mechanism for logging terminal sessions in a secure manner.
+Originally written by Dustin Lundquist to provide secure terminal sessions for
+SSH Bastion servers at Blue Box.  It is primarily used inside
+[Cuttle](https://github.com/IBM/cuttle) where it helps provide a secure SRE
+platform for operating distributed systems in the DataCenter or in the Cloud.
 
 Terminal sessions may include cryptographic secrets, personally identifiable
 information, or other information which should not be disclosed.
